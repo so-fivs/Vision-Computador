@@ -1,21 +1,15 @@
-# Archivos de Visual Studio
+# Visual Studio
 .vs/
 *.ipch
-*.pdb
-*.obj
-*.idb
-*.pch
-*.tlog
 
-# Ignorar archivos compilados
+# Compilados
 *.exe
 *.dll
 *.obj
 *.pdb
-*.ipch
 
-# Ignorar carpetas de compilación
-/x64/
+# Carpetas de build
 /Debug/
 /Release/
-/.vs/
+/x64/
+
