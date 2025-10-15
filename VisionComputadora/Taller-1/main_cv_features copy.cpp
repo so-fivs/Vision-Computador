@@ -51,7 +51,7 @@ void FindGoodMatches(
     }
     
     std::vector< std::vector<DMatch> > matches_knn;
-    const float ratio_thresh = 0.75f; 
+    const float ratio_thresh = 0.55f; 
 
     // Try-catch dentro de FindGoodMatches
     try {
@@ -188,13 +188,13 @@ int main()
 //---------------DECLARACION DE ALGORITMOS ----------------------------------
    
    // Parámetros y creación de descriptores y detector
-   Ptr<SIFT> feat_sift = SIFT::create(0, 10, 0.004, 10, 1.6); 
+   Ptr<SIFT> feat_sift = SIFT::create(0, 10, 0.04, 10, 1.6); 
    Ptr<SURF> feat_surf = SURF::create(500, 4, 4, false, false); 
    Ptr<BRISK> feat_brisk = BRISK::create(500, 20, 1.0f);
    Ptr<ORB> feat_orb = ORB::create(500, 1.2f, 12, 31, 0, 2, ORB::HARRIS_SCORE, 20, 20); 
    Ptr<FREAK> feat_freak = FREAK::create(true, true, 32.0f, 10);
    Ptr<xfeatures2d::BriefDescriptorExtractor> feat_brief = xfeatures2d::BriefDescriptorExtractor::create(64, true);
-   Ptr<FastFeatureDetector> detector_fast = FastFeatureDetector::create(10, false, FastFeatureDetector::TYPE_9_16);
+   Ptr<FastFeatureDetector> detector_fast = FastFeatureDetector::create(8, false, FastFeatureDetector::TYPE_9_16);
 
 
 //---------------DETECCIÓN DE KEYPOINTS SIFT----------------------------------
