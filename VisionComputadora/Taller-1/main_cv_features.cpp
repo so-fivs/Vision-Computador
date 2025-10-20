@@ -41,23 +41,22 @@ void FindGoodMatches(
     Ptr<DescriptorMatcher> matcher;
     if (matcher_type == 1) 
     {
-        // Hamming para descriptores binarios
+        // Hamming para descriptores binarios (BRISK, FREAK, BRIEF, ORB)
         matcher = DescriptorMatcher::create(DescriptorMatcher::BRUTEFORCE_HAMMING);
     }
     else 
     {
-        // L2 para descriptores flotantes
+        // L2 para descriptores flotantes (SIFT, SURF)
         matcher = DescriptorMatcher::create(DescriptorMatcher::BRUTEFORCE);
     }
     
     std::vector< std::vector<DMatch> > matches_knn;
-    const float ratio_thresh = 0.75f; 
+    const float ratio_thresh = 0.85f; 
 
     // Try-catch dentro de FindGoodMatches
     try {
         matcher->knnMatch(descriptors_object, descriptors_scene, matches_knn, 2);
     } catch (const cv::Exception& e) {
-        // Falló la comparación (p. ej., tipos de datos incompatibles o problema de tamaño)
         return;
     }
 
@@ -88,10 +87,7 @@ Mat DrawHomography(
     Mat img_matches;
     size_t num_matches = good_matches.size();
 
-    // ***************************************************************
-    // VERIFICACIÓN CLAVE: Si 2 o menos matches, se considera no compatible y retorna Mat vacía.
-    // ***************************************************************
-    if (num_matches <= 2) 
+    if (num_matches < 4) // Mínimo 4 puntos para Homografía
     {
         cout << title << " -> Combinación no compatible / Insuficientes matches (" << num_matches << ")" << endl;
         return Mat();
@@ -110,7 +106,7 @@ Mat DrawHomography(
         }
     }
 
-    if (obj_points.size() <= 2)
+    if (obj_points.size() < 4) // Mínimo 4 puntos para Homografía
     {
         cout << title << " -> Combinación no compatible / Puntos válidos insuficientes (" << obj_points.size() << ")" << endl;
         return Mat();
@@ -122,6 +118,12 @@ Mat DrawHomography(
         // TRY-CATCH para proteger la llamada inestable de drawMatches/findHomography
         try {
             Mat H = findHomography( obj_points, scene_points, RANSAC );
+
+            // Si H es nulo o inválido, findHomography falló.
+            if (H.empty()) {
+                cout << title << " -> ERROR: Homografía fallida. Puntos RANSAC insuficientes." << endl;
+                return Mat();
+            }
 
             std::vector<Point2f> obj_corners(4);
             obj_corners[0] = Point2f(0, 0); 
@@ -140,16 +142,15 @@ Mat DrawHomography(
             if (img_matches.channels() < 3) 
                 cvtColor(img_matches, img_matches, COLOR_GRAY2BGR);
             
-            line(img_matches, scene_corners[0] + Point2f((float)fto_objeto.cols, 0), 
-                 scene_corners[1] + Point2f((float)fto_objeto.cols, 0), Scalar(0, 255, 0), 4);
-            line(img_matches, scene_corners[1] + Point2f((float)fto_objeto.cols, 0), 
-                 scene_corners[2] + Point2f((float)fto_objeto.cols, 0), Scalar(0, 255, 0), 4);
-            line(img_matches, scene_corners[2] + Point2f((float)fto_objeto.cols, 0), 
-                 scene_corners[3] + Point2f((float)fto_objeto.cols, 0), Scalar(0, 255, 0), 4);
-            line(img_matches, scene_corners[3] + Point2f((float)fto_objeto.cols, 0), 
-                 scene_corners[0] + Point2f((float)fto_objeto.cols, 0), Scalar(0, 255, 0), 4);
+            // Dibujar el contorno en la escena
+            Point2f offset((float)fto_objeto.cols, 0.0f);
+            line(img_matches, scene_corners[0] + offset, scene_corners[1] + offset, Scalar(0, 255, 0), 4);
+            line(img_matches, scene_corners[1] + offset, scene_corners[2] + offset, Scalar(0, 255, 0), 4);
+            line(img_matches, scene_corners[2] + offset, scene_corners[3] + offset, Scalar(0, 255, 0), 4);
+            line(img_matches, scene_corners[3] + offset, scene_corners[0] + offset, Scalar(0, 255, 0), 4);
             
         } catch (const cv::Exception& e) {
+            // Este catch maneja el error de resize/drawMatches
             cout << title << " -> ERROR interno de OpenCV al dibujar/Homografía. Ignorado: " << e.what() << endl;
             return Mat();
         }
@@ -189,311 +190,303 @@ int main()
    
    // Parámetros y creación de descriptores y detector
    Ptr<SIFT> feat_sift = SIFT::create(0, 10, 0.004, 10, 1.6); 
-   Ptr<SURF> feat_surf = SURF::create(500, 4, 4, false, false); 
-   Ptr<BRISK> feat_brisk = BRISK::create(500, 20, 1.0f);
+   Ptr<SURF> feat_surf = SURF::create(300, 4, 4, false, false); 
+   Ptr<BRISK> feat_brisk = BRISK::create(300, 20, 1.0f);
    Ptr<ORB> feat_orb = ORB::create(500, 1.2f, 12, 31, 0, 2, ORB::HARRIS_SCORE, 20, 20); 
-   Ptr<FREAK> feat_freak = FREAK::create(true, true, 32.0f, 10);
-   Ptr<xfeatures2d::BriefDescriptorExtractor> feat_brief = xfeatures2d::BriefDescriptorExtractor::create(64, true);
+   Ptr<FREAK> feat_freak = FREAK::create(true, true, 16.0f, 10);
+   Ptr<xfeatures2d::BriefDescriptorExtractor> feat_brief = xfeatures2d::BriefDescriptorExtractor::create(32, true);
    Ptr<FastFeatureDetector> detector_fast = FastFeatureDetector::create(10, false, FastFeatureDetector::TYPE_9_16);
 
+// -------------------------------------------------------------------------------------
+// --------------- DETECCIÓN DE KEYPOINTS SIFT (Base para pruebas 1-6) -----------------
+// -------------------------------------------------------------------------------------
 
-//---------------DETECCIÓN DE KEYPOINTS SIFT----------------------------------
+std::vector<KeyPoint> keypoints_sift_objeto, keypoints_sift_scene;
+feat_sift->detect(fto_objeto, keypoints_sift_objeto);
+feat_sift->detect(fto_scene, keypoints_sift_scene);
 
-   std::vector<KeyPoint> keypoints_sift_objeto_BASE, keypoints_sift_scene_BASE;
-   feat_sift->detect(fto_objeto, keypoints_sift_objeto_BASE);
-   feat_sift->detect(fto_scene, keypoints_sift_scene_BASE);
-   
-   cout << "SIFT KeyPoints Objeto: " << keypoints_sift_objeto_BASE.size() << endl;
-   cout << "SIFT KeyPoints Escena: " << keypoints_sift_scene_BASE.size() << endl;
+cout << "\nSIFT KeyPoints Objeto: " << keypoints_sift_objeto.size() << endl;
+cout << "SIFT KeyPoints Escena: " << keypoints_sift_scene.size() << endl;
 
-//--- 1. SIFT - SIFT (L2) ----------------------------------------------------
-   Mat D_sift_sift_obj, D_sift_sift_scene;
-   std::vector<DMatch> M_sift_sift;
-   Mat img_sift_sift;
-   try {
-       feat_sift->compute(fto_objeto, keypoints_sift_objeto_BASE, D_sift_sift_obj);
-       feat_sift->compute(fto_scene, keypoints_sift_scene_BASE, D_sift_sift_scene);
-       FindGoodMatches(D_sift_sift_obj, D_sift_sift_scene, M_sift_sift, 0);
-       cout << "SIFT-SIFT Good Matches: " << M_sift_sift.size() << endl;
-       img_sift_sift = DrawHomography(fto_objeto, fto_scene, keypoints_sift_objeto_BASE, keypoints_sift_scene_BASE, M_sift_sift, "1. SIFT-SIFT");
-   } catch (const cv::Exception& e) {
-       cout << "ERROR en 1. SIFT-SIFT: " << e.what() << endl;
-   }
+// -------------------------------------------------------------------------------------
+// --------------- CÁLCULO DE DESCRIPTORES CON BASE SIFT KEYPOINTS ---------------------
+// -------------------------------------------------------------------------------------
 
-//--- 2. SIFT - SURF (L2) ----------------------------------------------------
-   Mat D_sift_surf_obj, D_sift_surf_scene;
-   std::vector<DMatch> M_sift_surf;
-   Mat img_sift_surf;
-   try {
-       feat_surf->compute(fto_objeto, keypoints_sift_objeto_BASE, D_sift_surf_obj);
-       feat_surf->compute(fto_scene, keypoints_sift_scene_BASE, D_sift_surf_scene);
-       FindGoodMatches(D_sift_surf_obj, D_sift_surf_scene, M_sift_surf, 0);
-       cout << "SIFT-SURF Good Matches: " << M_sift_surf.size() << endl;
-       img_sift_surf = DrawHomography(fto_objeto, fto_scene, keypoints_sift_objeto_BASE, keypoints_sift_scene_BASE, M_sift_surf, "2. SIFT-SURF");
-   } catch (const cv::Exception& e) {
-       cout << "ERROR en 2. SIFT-SURF: " << e.what() << endl;
-   }
+// Declaración de Mats para descriptores basados en SIFT KP
+Mat D_sift_sift_obj, D_sift_surf_obj, D_sift_brisk_obj, D_sift_freak_obj, D_sift_brief_obj, D_sift_orb_obj;
+Mat D_sift_sift_scene, D_sift_surf_scene, D_sift_brisk_scene, D_sift_freak_scene, D_sift_brief_scene, D_sift_orb_scene;
 
-//--- 3. SIFT - BRISK (Hamming) ----------------------------------------------
-   Mat D_sift_brisk_obj, D_sift_brisk_scene;
-   std::vector<DMatch> M_sift_brisk;
-   Mat img_sift_brisk;
-   try {
-       feat_brisk->compute(fto_objeto, keypoints_sift_objeto_BASE, D_sift_brisk_obj);
-       feat_brisk->compute(fto_scene, keypoints_sift_scene_BASE, D_sift_brisk_scene);
-       FindGoodMatches(D_sift_brisk_obj, D_sift_brisk_scene, M_sift_brisk, 1);
-       cout << "SIFT-BRISK Good Matches: " << M_sift_brisk.size() << endl;
-       img_sift_brisk = DrawHomography(fto_objeto, fto_scene, keypoints_sift_objeto_BASE, keypoints_sift_scene_BASE, M_sift_brisk, "3. SIFT-BRISK");
-   } catch (const cv::Exception& e) {
-       cout << "ERROR en 3. SIFT-BRISK: " << e.what() << endl;
-   }
+// Cálculo de descriptores para el OBJETO
+feat_sift->compute(fto_objeto, keypoints_sift_objeto, D_sift_sift_obj);
+feat_surf->compute(fto_objeto, keypoints_sift_objeto, D_sift_surf_obj);
+feat_brisk->compute(fto_objeto, keypoints_sift_objeto, D_sift_brisk_obj);
+feat_freak->compute(fto_objeto, keypoints_sift_objeto, D_sift_freak_obj);
+feat_brief->compute(fto_objeto, keypoints_sift_objeto, D_sift_brief_obj);
+feat_orb->compute(fto_objeto, keypoints_sift_objeto, D_sift_orb_obj);
 
-//--- 4. SIFT - FREAK (Hamming) ----------------------------------------------
-   Mat D_sift_freak_obj, D_sift_freak_scene;
-   std::vector<DMatch> M_sift_freak;
-   Mat img_sift_freak;
-   try {
-       feat_freak->compute(fto_objeto, keypoints_sift_objeto_BASE, D_sift_freak_obj);
-       feat_freak->compute(fto_scene, keypoints_sift_scene_BASE, D_sift_freak_scene);
-       FindGoodMatches(D_sift_freak_obj, D_sift_freak_scene, M_sift_freak, 1);
-       cout << "SIFT-FREAK Good Matches: " << M_sift_freak.size() << endl;
-       img_sift_freak = DrawHomography(fto_objeto, fto_scene, keypoints_sift_objeto_BASE, keypoints_sift_scene_BASE, M_sift_freak, "4. SIFT-FREAK");
-   } catch (const cv::Exception& e) {
-       cout << "ERROR en 4. SIFT-FREAK: " << e.what() << endl;
-   }
+// Cálculo de descriptores para la ESCENA
+feat_sift->compute(fto_scene, keypoints_sift_scene, D_sift_sift_scene);
+feat_surf->compute(fto_scene, keypoints_sift_scene, D_sift_surf_scene);
+feat_brisk->compute(fto_scene, keypoints_sift_scene, D_sift_brisk_scene);
+feat_freak->compute(fto_scene, keypoints_sift_scene, D_sift_freak_scene);
+feat_brief->compute(fto_scene, keypoints_sift_scene, D_sift_brief_scene);
+feat_orb->compute(fto_scene, keypoints_sift_scene, D_sift_orb_scene);
 
-//--- 5. SIFT - BRIEF (Hamming) ----------------------------------------------
-   Mat D_sift_brief_obj, D_sift_brief_scene;
-   std::vector<DMatch> M_sift_brief;
-   Mat img_sift_brief;
-   try {
-       feat_brief->compute(fto_objeto, keypoints_sift_objeto_BASE, D_sift_brief_obj);
-       feat_brief->compute(fto_scene, keypoints_sift_scene_BASE, D_sift_brief_scene);
-       FindGoodMatches(D_sift_brief_obj, D_sift_brief_scene, M_sift_brief, 1);
-       cout << "SIFT-BRIEF Good Matches: " << M_sift_brief.size() << endl;
-       img_sift_brief = DrawHomography(fto_objeto, fto_scene, keypoints_sift_objeto_BASE, keypoints_sift_scene_BASE, M_sift_brief, "5. SIFT-BRIEF");
-   } catch (const cv::Exception& e) {
-       cout << "ERROR en 5. SIFT-BRIEF: " << e.what() << endl;
-   }
 
-//--- 6. SIFT - ORB (Hamming) ------------------------------------------------
-   Mat D_sift_orb_obj, D_sift_orb_scene;
-   std::vector<DMatch> M_sift_orb;
-   Mat img_sift_orb;
-   try {
-       feat_orb->compute(fto_objeto, keypoints_sift_objeto_BASE, D_sift_orb_obj);
-       feat_orb->compute(fto_scene, keypoints_sift_scene_BASE, D_sift_orb_scene);
-       FindGoodMatches(D_sift_orb_obj, D_sift_orb_scene, M_sift_orb, 1);
-       cout << "SIFT-ORB Good Matches: " << M_sift_orb.size() << endl;
-       img_sift_orb = DrawHomography(fto_objeto, fto_scene, keypoints_sift_objeto_BASE, keypoints_sift_scene_BASE, M_sift_orb, "6. SIFT-ORB");
-   } catch (const cv::Exception& e) {
-       cout << "ERROR en 6. SIFT-ORB: " << e.what() << endl;
-   }
-    
+//--- 1. SIFT-SIFT (L2) ----------------------------------------------------
+std::vector<DMatch> M_sift_sift;
+Mat img_sift_sift;
+FindGoodMatches(D_sift_sift_obj, D_sift_sift_scene, M_sift_sift, 0); // 0 = L2
+cout << "1. SIFT-SIFT Good Matches: " << M_sift_sift.size() << endl;
+img_sift_sift = DrawHomography(fto_objeto, fto_scene, keypoints_sift_objeto, keypoints_sift_scene, M_sift_sift, "1. SIFT-SIFT");
+
+//--- 2. SURF-SURF (L2) - SIFT KP Base ---------------------------------------
+std::vector<DMatch> M_sift_surf;
+Mat img_sift_surf;
+FindGoodMatches(D_sift_surf_obj, D_sift_surf_scene, M_sift_surf, 0); // 0 = L2
+cout << "2. SIFT-SURF Good Matches: " << M_sift_surf.size() << endl;
+img_sift_surf = DrawHomography(fto_objeto, fto_scene, keypoints_sift_objeto, keypoints_sift_scene, M_sift_surf, "2. SIFT-SURF");
+
+//--- 3. BRISK-BRISK (Hamming) - SIFT KP Base --------------------------------
+std::vector<DMatch> M_sift_brisk;
+Mat img_sift_brisk;
+FindGoodMatches(D_sift_brisk_obj, D_sift_brisk_scene, M_sift_brisk, 1); // 1 = Hamming
+cout << "3. SIFT-BRISK Good Matches: " << M_sift_brisk.size() << endl;
+img_sift_brisk = DrawHomography(fto_objeto, fto_scene, keypoints_sift_objeto, keypoints_sift_scene, M_sift_brisk, "3. SIFT-BRISK");
+
+//--- 4. FREAK-FREAK (Hamming) - SIFT KP Base --------------------------------
+std::vector<DMatch> M_sift_freak;
+Mat img_sift_freak;
+FindGoodMatches(D_sift_freak_obj, D_sift_freak_scene, M_sift_freak, 1); // 1 = Hamming
+cout << "4. SIFT-FREAK Good Matches: " << M_sift_freak.size() << endl;
+img_sift_freak = DrawHomography(fto_objeto, fto_scene, keypoints_sift_objeto, keypoints_sift_scene, M_sift_freak, "4. SIFT-FREAK");
+
+//--- 5. BRIEF-BRIEF (Hamming) - SIFT KP Base --------------------------------
+std::vector<DMatch> M_sift_brief;
+Mat img_sift_brief;
+FindGoodMatches(D_sift_brief_obj, D_sift_brief_scene, M_sift_brief, 1); // 1 = Hamming
+cout << "5. SIFT-BRIEF Good Matches: " << M_sift_brief.size() << endl;
+img_sift_brief = DrawHomography(fto_objeto, fto_scene, keypoints_sift_objeto, keypoints_sift_scene, M_sift_brief, "5. SIFT-BRIEF");
+
+//--- 6. ORB-ORB (Hamming) - SIFT KP Base (CORREGIDO: Usa Norma 1 para ORB) ---
+std::vector<DMatch> M_sift_orb;
+Mat img_sift_orb;
+FindGoodMatches(D_sift_orb_obj, D_sift_orb_scene, M_sift_orb, 1); // 1 = Hamming (CORREGIDO)
+cout << "6. SIFT-ORB Good Matches: " << M_sift_orb.size() << endl;
+img_sift_orb = DrawHomography(fto_objeto, fto_scene, keypoints_sift_objeto, keypoints_sift_scene, M_sift_orb, "6. SIFT-ORB");
+ 
 //--------------------------------------------------------------------------------------------------
-//---------------DETECCIÓN DE KEYPOINTS FAST -----------------------------
+//--------------- DETECCIÓN DE KEYPOINTS FAST (Base para pruebas 7-12) -----------------------------
 
-   std::vector<KeyPoint> keypoints_fast_objeto_BASE, keypoints_fast_scene_BASE;
-   detector_fast->detect(fto_objeto, keypoints_fast_objeto_BASE);
-   detector_fast->detect(fto_scene, keypoints_fast_scene_BASE);
-   
-   cout << "FAST KeyPoints Objeto: " << keypoints_fast_objeto_BASE.size() << endl;
-   cout << "FAST KeyPoints Escena: " << keypoints_fast_scene_BASE.size() << endl;
+std::vector<KeyPoint> keypoints_fast_objeto, keypoints_fast_scene;
+detector_fast->detect(fto_objeto, keypoints_fast_objeto);
+detector_fast->detect(fto_scene, keypoints_fast_scene);
 
+cout << "\nFAST KeyPoints Objeto: " << keypoints_fast_objeto.size() << endl;
+cout << "FAST KeyPoints Escena: " << keypoints_fast_scene.size() << endl;
 
-//--- 7. FAST - SIFT (L2) ----------------------------------------------------
-   Mat D_fast_sift_obj, D_fast_sift_scene;
-   std::vector<DMatch> M_fast_sift;
-   Mat img_fast_sift;
-   try {
-       feat_sift->compute(fto_objeto, keypoints_fast_objeto_BASE, D_fast_sift_obj);
-       feat_sift->compute(fto_scene, keypoints_fast_scene_BASE, D_fast_sift_scene);
-       FindGoodMatches(D_fast_sift_obj, D_fast_sift_scene, M_fast_sift, 0);
-       cout << "FAST-SIFT Good Matches: " << M_fast_sift.size() << endl;
-       img_fast_sift = DrawHomography(fto_objeto, fto_scene, keypoints_fast_objeto_BASE, keypoints_fast_scene_BASE, M_fast_sift, "7. FAST-SIFT");
-   } catch (const cv::Exception& e) {
-       cout << "ERROR en 7. FAST-SIFT: " << e.what() << endl;
-   }
+// -------------------------------------------------------------------------------------
+// --------------- CÁLCULO DE DESCRIPTORES CON BASE FAST KEYPOINTS ---------------------
+// -------------------------------------------------------------------------------------
 
+// Declaración de Mats para descriptores basados en FAST KP
+Mat D_fast_sift_obj, D_fast_brisk_obj, D_fast_surf_obj, D_fast_orb_obj, D_fast_brief_obj, D_fast_freak_obj;
+Mat D_fast_sift_scene, D_fast_brisk_scene, D_fast_surf_scene, D_fast_orb_scene, D_fast_brief_scene, D_fast_freak_scene;
 
-//--- 8. FAST - BRISK (Hamming) ----------------------------------------------
-   Mat D_fast_brisk_obj, D_fast_brisk_scene;
-   std::vector<DMatch> M_fast_brisk;
-   Mat img_fast_brisk;
-   try {
-       feat_brisk->compute(fto_objeto, keypoints_fast_objeto_BASE, D_fast_brisk_obj);
-       feat_brisk->compute(fto_scene, keypoints_fast_scene_BASE, D_fast_brisk_scene);
-       FindGoodMatches(D_fast_brisk_obj, D_fast_brisk_scene, M_fast_brisk, 1);
-       cout << "FAST-BRISK Good Matches: " << M_fast_brisk.size() << endl;
-       img_fast_brisk = DrawHomography(fto_objeto, fto_scene, keypoints_fast_objeto_BASE, keypoints_fast_scene_BASE, M_fast_brisk, "8. FAST-BRISK");
-   } catch (const cv::Exception& e) {
-       cout << "ERROR en 8. FAST-BRISK: " << e.what() << endl;
-   }
+// Cálculo de descriptores para el OBJETO
+feat_sift->compute(fto_objeto, keypoints_fast_objeto, D_fast_sift_obj);
+feat_brisk->compute(fto_objeto, keypoints_fast_objeto, D_fast_brisk_obj);
+feat_surf->compute(fto_objeto, keypoints_fast_objeto, D_fast_surf_obj);
+feat_orb->compute(fto_objeto, keypoints_fast_objeto, D_fast_orb_obj);
+feat_brief->compute(fto_objeto, keypoints_fast_objeto, D_fast_brief_obj);
+feat_freak->compute(fto_objeto, keypoints_fast_objeto, D_fast_freak_obj);
+
+// Cálculo de descriptores para la ESCENA
+feat_sift->compute(fto_scene, keypoints_fast_scene, D_fast_sift_scene);
+feat_brisk->compute(fto_scene, keypoints_fast_scene, D_fast_brisk_scene);
+feat_surf->compute(fto_scene, keypoints_fast_scene, D_fast_surf_scene);
+feat_orb->compute(fto_scene, keypoints_fast_scene, D_fast_orb_scene);
+feat_brief->compute(fto_scene, keypoints_fast_scene, D_fast_brief_scene);
+feat_freak->compute(fto_scene, keypoints_fast_scene, D_fast_freak_scene);
 
 
-//--- 9. FAST - SURF (L2) ----------------------------------------------------
-   Mat D_fast_surf_obj, D_fast_surf_scene;
-   std::vector<DMatch> M_fast_surf;
-   Mat img_fast_surf;
-   try {
-       feat_surf->compute(fto_objeto, keypoints_fast_objeto_BASE, D_fast_surf_obj);
-       feat_surf->compute(fto_scene, keypoints_fast_scene_BASE, D_fast_surf_scene);
-       FindGoodMatches(D_fast_surf_obj, D_fast_surf_scene, M_fast_surf, 0);
-       cout << "FAST-SURF Good Matches: " << M_fast_surf.size() << endl;
-       img_fast_surf = DrawHomography(fto_objeto, fto_scene, keypoints_fast_objeto_BASE, keypoints_fast_scene_BASE, M_fast_surf, "9. FAST-SURF");
-   } catch (const cv::Exception& e) {
-       cout << "ERROR en 9. FAST-SURF: " << e.what() << endl;
-   }
+//--- 7. SIFT-SIFT (L2) - FAST KP Base ---------------------------------------
+std::vector<DMatch> M_fast_sift;
+Mat img_fast_sift;
+FindGoodMatches(D_fast_sift_obj, D_fast_sift_scene, M_fast_sift, 0); // 0 = L2
+cout << "7. FAST-SIFT Good Matches: " << M_fast_sift.size() << endl;
+img_fast_sift = DrawHomography(fto_objeto, fto_scene, keypoints_fast_objeto, keypoints_fast_scene, M_fast_sift, "7. FAST-SIFT");
 
+//--- 8. BRISK-BRISK (Hamming) - FAST KP Base --------------------------------
+std::vector<DMatch> M_fast_brisk;
+Mat img_fast_brisk;
+FindGoodMatches(D_fast_brisk_obj, D_fast_brisk_scene, M_fast_brisk, 1); // 1 = Hamming
+cout << "8. FAST-BRISK Good Matches: " << M_fast_brisk.size() << endl;
+img_fast_brisk = DrawHomography(fto_objeto, fto_scene, keypoints_fast_objeto, keypoints_fast_scene, M_fast_brisk, "8. FAST-BRISK");
 
-//--- 10. FAST - ORB (Hamming) -----------------------------------------------
-   Mat D_fast_orb_obj, D_fast_orb_scene;
-   std::vector<DMatch> M_fast_orb;
-   Mat img_fast_orb;
-   try {
-       feat_orb->compute(fto_objeto, keypoints_fast_objeto_BASE, D_fast_orb_obj);
-       feat_orb->compute(fto_scene, keypoints_fast_scene_BASE, D_fast_orb_scene);
-       FindGoodMatches(D_fast_orb_obj, D_fast_orb_scene, M_fast_orb, 1);
-       cout << "FAST-ORB Good Matches: " << M_fast_orb.size() << endl;
-       img_fast_orb = DrawHomography(fto_objeto, fto_scene, keypoints_fast_objeto_BASE, keypoints_fast_scene_BASE, M_fast_orb, "10. FAST-ORB");
-   } catch (const cv::Exception& e) {
-       cout << "ERROR en 10. FAST-ORB: " << e.what() << endl;
-   }
+//--- 9. SURF-SURF (L2) - FAST KP Base ---------------------------------------
+std::vector<DMatch> M_fast_surf;
+Mat img_fast_surf;
+FindGoodMatches(D_fast_surf_obj, D_fast_surf_scene, M_fast_surf, 0); // 0 = L2
+cout << "9. FAST-SURF Good Matches: " << M_fast_surf.size() << endl;
+img_fast_surf = DrawHomography(fto_objeto, fto_scene, keypoints_fast_objeto, keypoints_fast_scene, M_fast_surf, "9. FAST-SURF");
 
+//--- 10. ORB-ORB (Hamming) - FAST KP Base -----------------------------------
+std::vector<DMatch> M_fast_orb;
+Mat img_fast_orb;
+FindGoodMatches(D_fast_orb_obj, D_fast_orb_scene, M_fast_orb, 1); // 1 = Hamming
+cout << "10. FAST-ORB Good Matches: " << M_fast_orb.size() << endl;
+img_fast_orb = DrawHomography(fto_objeto, fto_scene, keypoints_fast_objeto, keypoints_fast_scene, M_fast_orb, "10. FAST-ORB");
 
-//--- 11. FAST - BRIEF (Hamming) ---------------------------------------------
-   Mat D_fast_brief_obj, D_fast_brief_scene;
-   std::vector<DMatch> M_fast_brief;
-   Mat img_fast_brief;
-   try {
-       feat_brief->compute(fto_objeto, keypoints_fast_objeto_BASE, D_fast_brief_obj);
-       feat_brief->compute(fto_scene, keypoints_fast_scene_BASE, D_fast_brief_scene);
-       FindGoodMatches(D_fast_brief_obj, D_fast_brief_scene, M_fast_brief, 1);
-       cout << "FAST-BRIEF Good Matches: " << M_fast_brief.size() << endl;
-       img_fast_brief = DrawHomography(fto_objeto, fto_scene, keypoints_fast_objeto_BASE, keypoints_fast_scene_BASE, M_fast_brief, "11. FAST-BRIEF");
-   } catch (const cv::Exception& e) {
-       cout << "ERROR en 11. FAST-BRIEF: " << e.what() << endl;
-   }
+//--- 11. BRIEF-BRIEF (Hamming) - FAST KP Base -------------------------------
+std::vector<DMatch> M_fast_brief;
+Mat img_fast_brief;
+FindGoodMatches(D_fast_brief_obj, D_fast_brief_scene, M_fast_brief, 1); // 1 = Hamming
+cout << "11. FAST-BRIEF Good Matches: " << M_fast_brief.size() << endl;
+img_fast_brief = DrawHomography(fto_objeto, fto_scene, keypoints_fast_objeto, keypoints_fast_scene, M_fast_brief, "11. FAST-BRIEF");
 
+//--- 12. FREAK-FREAK (Hamming) - FAST KP Base -------------------------------
+std::vector<DMatch> M_fast_freak;
+Mat img_fast_freak;
+FindGoodMatches(D_fast_freak_obj, D_fast_freak_scene, M_fast_freak, 1); // 1 = Hamming
+cout << "12. FAST-FREAK Good Matches: " << M_fast_freak.size() << endl;
+img_fast_freak = DrawHomography(fto_objeto, fto_scene, keypoints_fast_objeto, keypoints_fast_scene, M_fast_freak, "12. FAST-FREAK");
 
-//--- 12. FAST - FREAK (Hamming) ---------------------------------------------
-   Mat D_fast_freak_obj, D_fast_freak_scene;
-   std::vector<DMatch> M_fast_freak;
-   Mat img_fast_freak;
-   try {
-       feat_freak->compute(fto_objeto, keypoints_fast_objeto_BASE, D_fast_freak_obj);
-       feat_freak->compute(fto_scene, keypoints_fast_scene_BASE, D_fast_freak_scene);
-       FindGoodMatches(D_fast_freak_obj, D_fast_freak_scene, M_fast_freak, 1);
-       cout << "FAST-FREAK Good Matches: " << M_fast_freak.size() << endl;
-       img_fast_freak = DrawHomography(fto_objeto, fto_scene, keypoints_fast_objeto_BASE, keypoints_fast_scene_BASE, M_fast_freak, "12. FAST-FREAK");
-   } catch (const cv::Exception& e) {
-       cout << "ERROR en 12. FAST-FREAK: " << e.what() << endl;
-   }
 
 //--------------------------------------------------------------------------------------------------
-//---------------DETECCIÓN DE KEYPOINTS BRIEF (Usando FAST como detector base)----------------------
+//--------------- DETECCIÓN DE KEYPOINTS SURF (Base para pruebas 20-25) ----------------------------
 
-   // En esta sección se utilizan los KeyPoints generados por FAST (keypoints_fast_objeto_BASE/scene_BASE) 
-   // ya que BRIEF es solo un descriptor, no un detector.
+std::vector<KeyPoint> keypoints_surf_objeto, keypoints_surf_scene;
+feat_surf->detect(fto_objeto, keypoints_surf_objeto);
+feat_surf->detect(fto_scene, keypoints_surf_scene);
 
-//--- 13. BRIEF - BRIEF (Hamming) --------------------------------------------
-   Mat D_brief_brief_obj, D_brief_brief_scene;
-   std::vector<DMatch> M_brief_brief;
-   Mat img_brief_brief;
-   try {
-       feat_brief->compute(fto_objeto, keypoints_fast_objeto_BASE, D_brief_brief_obj);
-       feat_brief->compute(fto_scene, keypoints_fast_scene_BASE, D_brief_brief_scene);
-       FindGoodMatches(D_brief_brief_obj, D_brief_brief_scene, M_brief_brief, 1);
-       cout << "BRIEF-BRIEF Good Matches: " << M_brief_brief.size() << endl;
-       img_brief_brief = DrawHomography(fto_objeto, fto_scene, keypoints_fast_objeto_BASE, keypoints_fast_scene_BASE, M_brief_brief, "13. BRIEF-BRIEF");
-   } catch (const cv::Exception& e) {
-       cout << "ERROR en 13. BRIEF-BRIEF: " << e.what() << endl;
-   }
+cout << "\nSURF KeyPoints Objeto: " << keypoints_surf_objeto.size() << endl;
+cout << "SURF KeyPoints Escena: " << keypoints_surf_scene.size() << endl;
 
-//--- 14. BRIEF - FAST (Hamming) ---------------------------------------------
-   Mat D_brief_orb_obj, D_brief_orb_scene; 
-   std::vector<DMatch> M_brief_orb;
-   Mat img_brief_orb;
-   try {
-       feat_orb->compute(fto_objeto, keypoints_fast_objeto_BASE, D_brief_orb_obj);
-       feat_orb->compute(fto_scene, keypoints_fast_scene_BASE, D_brief_orb_scene);
-       FindGoodMatches(D_brief_orb_obj, D_brief_orb_scene, M_brief_orb, 1);
-       cout << "BRIEF-ORB Good Matches: " << M_brief_orb.size() << endl;
-       img_brief_orb = DrawHomography(fto_objeto, fto_scene, keypoints_fast_objeto_BASE, keypoints_fast_scene_BASE, M_brief_orb, "14. BRIEF-ORB (FAST Detector)");
-   } catch (const cv::Exception& e) {
-       cout << "ERROR en 14. BRIEF-ORB: " << e.what() << endl;
-   }
+// -------------------------------------------------------------------------------------
+// --------------- CÁLCULO DE DESCRIPTORES CON BASE SURF KEYPOINTS ---------------------
+// -------------------------------------------------------------------------------------
 
+// Declaración de Mats para descriptores basados en SURF KP
+Mat D_surf_sift_obj, D_surf_surf_obj, D_surf_brisk_obj, D_surf_freak_obj, D_surf_brief_obj, D_surf_orb_obj;
+Mat D_surf_sift_scene, D_surf_surf_scene, D_surf_brisk_scene, D_surf_freak_scene, D_surf_brief_scene, D_surf_orb_scene;
 
-//--- 15. BRIEF - SURF (L2) --------------------------------------------------
-   Mat D_brief_surf_obj, D_brief_surf_scene;
-   std::vector<DMatch> M_brief_surf;
-   Mat img_brief_surf;
-   try {
-       feat_surf->compute(fto_objeto, keypoints_fast_objeto_BASE, D_brief_surf_obj);
-       feat_surf->compute(fto_scene, keypoints_fast_scene_BASE, D_brief_surf_scene);
-       FindGoodMatches(D_brief_surf_obj, D_brief_surf_scene, M_brief_surf, 0); // L2
-       cout << "BRIEF-SURF Good Matches: " << M_brief_surf.size() << endl;
-       img_brief_surf = DrawHomography(fto_objeto, fto_scene, keypoints_fast_objeto_BASE, keypoints_fast_scene_BASE, M_brief_surf, "15. BRIEF-SURF");
-   } catch (const cv::Exception& e) {
-       cout << "ERROR en 15. BRIEF-SURF: " << e.what() << endl;
-   }
+// Cálculo de descriptores para el OBJETO
+feat_sift->compute(fto_objeto, keypoints_surf_objeto, D_surf_sift_obj);
+feat_surf->compute(fto_objeto, keypoints_surf_objeto, D_surf_surf_obj);
+feat_brisk->compute(fto_objeto, keypoints_surf_objeto, D_surf_brisk_obj);
+feat_freak->compute(fto_objeto, keypoints_surf_objeto, D_surf_freak_obj);
+feat_brief->compute(fto_objeto, keypoints_surf_objeto, D_surf_brief_obj);
+feat_orb->compute(fto_objeto, keypoints_surf_objeto, D_surf_orb_obj);
 
-//--- 16. BRIEF - FREAK (Hamming) --------------------------------------------
-   Mat D_brief_freak_obj, D_brief_freak_scene;
-   std::vector<DMatch> M_brief_freak;
-   Mat img_brief_freak;
-   try {
-       feat_freak->compute(fto_objeto, keypoints_fast_objeto_BASE, D_brief_freak_obj);
-       feat_freak->compute(fto_scene, keypoints_fast_scene_BASE, D_brief_freak_scene);
-       FindGoodMatches(D_brief_freak_obj, D_brief_freak_scene, M_brief_freak, 1);
-       cout << "BRIEF-FREAK Good Matches: " << M_brief_freak.size() << endl;
-       img_brief_freak = DrawHomography(fto_objeto, fto_scene, keypoints_fast_objeto_BASE, keypoints_fast_scene_BASE, M_brief_freak, "16. BRIEF-FREAK");
-   } catch (const cv::Exception& e) {
-       cout << "ERROR en 16. BRIEF-FREAK: " << e.what() << endl;
-   }
+// Cálculo de descriptores para la ESCENA
+feat_sift->compute(fto_scene, keypoints_surf_scene, D_surf_sift_scene);
+feat_surf->compute(fto_scene, keypoints_surf_scene, D_surf_surf_scene);
+feat_brisk->compute(fto_scene, keypoints_surf_scene, D_surf_brisk_scene);
+feat_freak->compute(fto_scene, keypoints_surf_scene, D_surf_freak_scene);
+feat_brief->compute(fto_scene, keypoints_surf_scene, D_surf_brief_scene);
+feat_orb->compute(fto_scene, keypoints_surf_scene, D_surf_orb_scene);
 
-//--- 17. BRIEF - SIFT (L2) --------------------------------------------------
-   Mat D_brief_sift_obj, D_brief_sift_scene;
-   std::vector<DMatch> M_brief_sift;
-   Mat img_brief_sift;
-   try {
-       feat_sift->compute(fto_objeto, keypoints_fast_objeto_BASE, D_brief_sift_obj);
-       feat_sift->compute(fto_scene, keypoints_fast_scene_BASE, D_brief_sift_scene);
-       FindGoodMatches(D_brief_sift_obj, D_brief_sift_scene, M_brief_sift, 0); // L2
-       cout << "BRIEF-SIFT Good Matches: " << M_brief_sift.size() << endl;
-       img_brief_sift = DrawHomography(fto_objeto, fto_scene, keypoints_fast_objeto_BASE, keypoints_fast_scene_BASE, M_brief_sift, "17. BRIEF-SIFT");
-   } catch (const cv::Exception& e) {
-       cout << "ERROR en 17. BRIEF-SIFT: " << e.what() << endl;
-   }
+//--- 20. SIFT-SIFT (L2) - SURF KP Base --------------------------------------
+std::vector<DMatch> M_surf_sift;
+Mat img_surf_sift;
+FindGoodMatches(D_surf_sift_obj, D_surf_sift_scene, M_surf_sift, 0); // 0 = L2
+cout << "20. SURF-SIFT Good Matches: " << M_surf_sift.size() << endl;
+img_surf_sift = DrawHomography(fto_objeto, fto_scene, keypoints_surf_objeto, keypoints_surf_scene, M_surf_sift, "20. SURF-SIFT");
 
-//--- 18. BRIEF - BRISK (Hamming) --------------------------------------------
-   Mat D_brief_brisk_obj, D_brief_brisk_scene;
-   std::vector<DMatch> M_brief_brisk;
-   Mat img_brief_brisk;
-   try {
-       feat_brisk->compute(fto_objeto, keypoints_fast_objeto_BASE, D_brief_brisk_obj);
-       feat_brisk->compute(fto_scene, keypoints_fast_scene_BASE, D_brief_brisk_scene);
-       FindGoodMatches(D_brief_brisk_obj, D_brief_brisk_scene, M_brief_brisk, 1);
-       cout << "BRIEF-BRISK Good Matches: " << M_brief_brisk.size() << endl;
-       img_brief_brisk = DrawHomography(fto_objeto, fto_scene, keypoints_fast_objeto_BASE, keypoints_fast_scene_BASE, M_brief_brisk, "18. BRIEF-BRISK");
-   } catch (const cv::Exception& e) {
-       cout << "ERROR en 18. BRIEF-BRISK: " << e.what() << endl;
-   }
+//--- 21. SURF-SURF (L2) - SURF KP Base --------------------------------------
+std::vector<DMatch> M_surf_surf;
+Mat img_surf_surf;
+FindGoodMatches(D_surf_surf_obj, D_surf_surf_scene, M_surf_surf, 0); // 0 = L2
+cout << "21. SURF-SURF Good Matches: " << M_surf_surf.size() << endl;
+img_surf_surf = DrawHomography(fto_objeto, fto_scene, keypoints_surf_objeto, keypoints_surf_scene, M_surf_surf, "21. SURF-SURF");
 
-//--- 19. BRIEF - ORB (Hamming) ----------------------------------------------
-   Mat D_brief_orb_2_obj, D_brief_orb_2_scene; // Se usa un nuevo nombre para evitar conflicto con la 14
-   std::vector<DMatch> M_brief_orb_2;
-   Mat img_brief_orb_2;
-   try {
-       feat_orb->compute(fto_objeto, keypoints_fast_objeto_BASE, D_brief_orb_2_obj);
-       feat_orb->compute(fto_scene, keypoints_fast_scene_BASE, D_brief_orb_2_scene);
-       FindGoodMatches(D_brief_orb_2_obj, D_brief_orb_2_scene, M_brief_orb_2, 1);
-       cout << "BRIEF-ORB Good Matches: " << M_brief_orb_2.size() << endl;
-       img_brief_orb_2 = DrawHomography(fto_objeto, fto_scene, keypoints_fast_objeto_BASE, keypoints_fast_scene_BASE, M_brief_orb_2, "19. BRIEF-ORB (Descriptor)");
-   } catch (const cv::Exception& e) {
-       cout << "ERROR en 19. BRIEF-ORB: " << e.what() << endl;
-   }
+//--- 22. BRISK-BRISK (Hamming) - SURF KP Base -------------------------------
+std::vector<DMatch> M_surf_brisk;
+Mat img_surf_brisk;
+FindGoodMatches(D_surf_brisk_obj, D_surf_brisk_scene, M_surf_brisk, 1); // 1 = Hamming
+cout << "22. SURF-BRISK Good Matches: " << M_surf_brisk.size() << endl;
+img_surf_brisk = DrawHomography(fto_objeto, fto_scene, keypoints_surf_objeto, keypoints_surf_scene, M_surf_brisk, "22. SURF-BRISK");
+
+//--- 23. FREAK-FREAK (Hamming) - SURF KP Base -------------------------------
+std::vector<DMatch> M_surf_freak;
+Mat img_surf_freak;
+FindGoodMatches(D_surf_freak_obj, D_surf_freak_scene, M_surf_freak, 1); // 1 = Hamming
+cout << "23. SURF-FREAK Good Matches: " << M_surf_freak.size() << endl;
+img_surf_freak = DrawHomography(fto_objeto, fto_scene, keypoints_surf_objeto, keypoints_surf_scene, M_surf_freak, "23. SURF-FREAK");
+
+//--- 24. BRIEF-BRIEF (Hamming) - SURF KP Base -------------------------------
+std::vector<DMatch> M_surf_brief;
+Mat img_surf_brief;
+FindGoodMatches(D_surf_brief_obj, D_surf_brief_scene, M_surf_brief, 1); // 1 = Hamming
+cout << "24. SURF-BRIEF Good Matches: " << M_surf_brief.size() << endl;
+img_surf_brief = DrawHomography(fto_objeto, fto_scene, keypoints_surf_objeto, keypoints_surf_scene, M_surf_brief, "24. SURF-BRIEF");
+
+//--- 25. ORB-ORB (Hamming) - SURF KP Base -----------------------------------
+std::vector<DMatch> M_surf_orb;
+Mat img_surf_orb;
+FindGoodMatches(D_surf_orb_obj, D_surf_orb_scene, M_surf_orb, 1); // 1 = Hamming
+cout << "25. SURF-ORB Good Matches: " << M_surf_orb.size() << endl;
+img_surf_orb = DrawHomography(fto_objeto, fto_scene, keypoints_surf_objeto, keypoints_surf_scene, M_surf_orb, "25. SURF-ORB");
+//--------------------------------------------------------------------------------------------------
+//--------------- CÁLCULO DE DESCRIPTORES CON BASE SIFT KEYPOINTS (Para pruebas 13-19) -------------
+//--------------- Se reutilizan los descriptores D_sift_* de la sección inicial --------------------
+
+//--- 13. BRIEF-BRIEF (Hamming) - SIFT KP Base --------------------------------
+// Se reutilizan D_sift_brief_obj y D_sift_brief_scene
+std::vector<DMatch> M_brief_brief;
+Mat img_brief_brief;
+FindGoodMatches(D_sift_brief_obj, D_sift_brief_scene, M_brief_brief, 1); // 1 = Hamming
+cout << "13. BRIEF-BRIEF Good Matches: " << M_brief_brief.size() << endl;
+img_brief_brief = DrawHomography(fto_objeto, fto_scene, keypoints_sift_objeto, keypoints_sift_scene, M_brief_brief, "13. BRIEF-BRIEF");
+
+//--- 14. ORB-ORB (Hamming) - SIFT KP Base ------------------------------------
+// Se reutilizan D_sift_orb_obj y D_sift_orb_scene
+std::vector<DMatch> M_brief_orb_sift_kp; // Renombrado para claridad
+Mat img_brief_orb_sift_kp;
+FindGoodMatches(D_sift_orb_obj, D_sift_orb_scene, M_brief_orb_sift_kp, 1); // 1 = Hamming
+cout << "14. BRIEF-ORB Good Matches: " << M_brief_orb_sift_kp.size() << endl;
+img_brief_orb_sift_kp = DrawHomography(fto_objeto, fto_scene, keypoints_sift_objeto, keypoints_sift_scene, M_brief_orb_sift_kp, "14. BRIEF-ORB (SIFT Detector)");
+
+//--- 15. SURF-SURF (L2) - SIFT KP Base ---------------------------------------
+// Se reutilizan D_sift_surf_obj y D_sift_surf_scene
+std::vector<DMatch> M_brief_surf;
+Mat img_brief_surf;
+FindGoodMatches(D_sift_surf_obj, D_sift_surf_scene, M_brief_surf, 0); // 0 = L2
+cout << "15. BRIEF-SURF Good Matches: " << M_brief_surf.size() << endl;
+img_brief_surf = DrawHomography(fto_objeto, fto_scene, keypoints_sift_objeto, keypoints_sift_scene, M_brief_surf, "15. BRIEF-SURF");
+
+//--- 16. FREAK-FREAK (Hamming) - SIFT KP Base --------------------------------
+// Se reutilizan D_sift_freak_obj y D_sift_freak_scene
+std::vector<DMatch> M_brief_freak;
+Mat img_brief_freak;
+FindGoodMatches(D_sift_freak_obj, D_sift_freak_scene, M_brief_freak, 1); // 1 = Hamming
+cout << "16. BRIEF-FREAK Good Matches: " << M_brief_freak.size() << endl;
+img_brief_freak = DrawHomography(fto_objeto, fto_scene, keypoints_sift_objeto, keypoints_sift_scene, M_brief_freak, "16. BRIEF-FREAK");
+
+//--- 17. SIFT-SIFT (L2) - SIFT KP Base ---------------------------------------
+// Se reutilizan D_sift_sift_obj y D_sift_sift_scene
+std::vector<DMatch> M_brief_sift;
+Mat img_brief_sift;
+FindGoodMatches(D_sift_sift_obj, D_sift_sift_scene, M_brief_sift, 0); // 0 = L2
+cout << "17. BRIEF-SIFT Good Matches: " << M_brief_sift.size() << endl;
+img_brief_sift = DrawHomography(fto_objeto, fto_scene, keypoints_sift_objeto, keypoints_sift_scene, M_brief_sift, "17. BRIEF-SIFT");
+
+//--- 18. BRISK-BRISK (Hamming) - SIFT KP Base --------------------------------
+// Se reutilizan D_sift_brisk_obj y D_sift_brisk_scene
+std::vector<DMatch> M_brief_brisk;
+Mat img_brief_brisk;
+FindGoodMatches(D_sift_brisk_obj, D_sift_brisk_scene, M_brief_brisk, 1); // 1 = Hamming
+cout << "18. BRIEF-BRISK Good Matches: " << M_brief_brisk.size() << endl;
+img_brief_brisk = DrawHomography(fto_objeto, fto_scene, keypoints_sift_objeto, keypoints_sift_scene, M_brief_brisk, "18. BRIEF-BRISK");
+
+//--- 19. ORB-ORB (Hamming) - SIFT KP Base ------------------------------------
+// Se reutilizan D_sift_orb_obj y D_sift_orb_scene
+std::vector<DMatch> M_brief_orb_2; 
+Mat img_brief_orb_2;
+FindGoodMatches(D_sift_orb_obj, D_sift_orb_scene, M_brief_orb_2, 1); // 1 = Hamming
+cout << "19. BRIEF-ORB Good Matches: " << M_brief_orb_2.size() << endl;
+img_brief_orb_2 = DrawHomography(fto_objeto, fto_scene, keypoints_sift_objeto, keypoints_sift_scene, M_brief_orb_2, "19. BRIEF-ORB (Descriptor)");
 
 
 //---------------VISUALIZACIONES (Solo si la imagen NO está vacía) -----------------------------------
@@ -512,8 +505,15 @@ int main()
     if (!img_fast_brief.empty()) imshow("11. FAST-BRIEF", img_fast_brief);
     if (!img_fast_freak.empty()) imshow("12. FAST-FREAK", img_fast_freak);
     
+    if (!img_surf_sift.empty()) imshow("20. SURF-SIFT", img_surf_sift);
+    if (!img_surf_surf.empty()) imshow("21. SURF-SURF", img_surf_surf);
+    if (!img_surf_brisk.empty()) imshow("22. SURF-BRISK", img_surf_brisk);
+    if (!img_surf_freak.empty()) imshow("23. SURF-FREAK", img_surf_freak);
+    if (!img_surf_brief.empty()) imshow("24. SURF-BRIEF", img_surf_brief);
+    if (!img_surf_orb.empty()) imshow("25. SURF-ORB", img_surf_orb);
+    
     if (!img_brief_brief.empty()) imshow("13. BRIEF-BRIEF", img_brief_brief);
-    if (!img_brief_orb.empty()) imshow("14. BRIEF-ORB (FAST Base)", img_brief_orb);
+    if (!img_brief_orb_sift_kp.empty()) imshow("14. BRIEF-ORB (SIFT Base)", img_brief_orb_sift_kp);
     if (!img_brief_surf.empty()) imshow("15. BRIEF-SURF", img_brief_surf);
     if (!img_brief_freak.empty()) imshow("16. BRIEF-FREAK", img_brief_freak);
     if (!img_brief_sift.empty()) imshow("17. BRIEF-SIFT", img_brief_sift);
@@ -526,7 +526,9 @@ int main()
         !img_sift_freak.empty() || !img_sift_brief.empty() || !img_sift_orb.empty() ||
         !img_fast_sift.empty() || !img_fast_brisk.empty() || !img_fast_surf.empty() || 
         !img_fast_orb.empty() || !img_fast_brief.empty() || !img_fast_freak.empty() ||
-        !img_brief_brief.empty() || !img_brief_orb.empty() || !img_brief_surf.empty() || 
+        !img_surf_sift.empty() || !img_surf_surf.empty() || !img_surf_brisk.empty() || 
+        !img_surf_freak.empty() || !img_surf_brief.empty() || !img_surf_orb.empty() ||
+        !img_brief_brief.empty() || !img_brief_orb_sift_kp.empty() || !img_brief_surf.empty() || 
         !img_brief_freak.empty() || !img_brief_sift.empty() || !img_brief_brisk.empty() || !img_brief_orb_2.empty()) {
         waitKey();
     }
