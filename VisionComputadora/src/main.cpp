@@ -214,7 +214,7 @@ int main()
         
         // Filtrar buenos matches BRISK (ratio test)
         std::vector<DMatch> good_matches_brisk;
-        const float ratio_thresh = 0.75f;
+        const float ratio_thresh = 0.85f;
         for(size_t i = 0; i < knn_matches_brisk.size(); i++)
         {
             if(knn_matches_brisk[i].size() >= 2 && 
